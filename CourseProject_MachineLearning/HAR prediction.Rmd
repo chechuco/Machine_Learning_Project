@@ -1,0 +1,107 @@
+---
+title: "HAR prediction"
+author: "Josechu Carballedo"
+date: "30 de enero de 2016"
+output: html_document
+---
+# Executive summary
+The study is about the quality of execution of an activity, more particularly, an exercise of barbell lifts. A group of six voluntaries were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). More information in http://groupware.les.inf.puc-rio.br/har#ixzz3yrXERil7.
+
+The goal of the project is to predict the manner in which they did the exercise (the "classe" variable in the training set). We will use the prediction model to predict 20 different test cases.
+
+# Data gathering
+This script donwloads the data to the working directory as CSV files, and load them into R:
+```{r}
+#Get the data 
+if (!file.exists("./pml-training.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "./pml-training.csv")
+}
+if (!file.exists("./pml-testing.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "./pml-testing.csv")
+}
+
+#Load training set
+train_data <- read.csv("pml-training.csv",header = TRUE, na.strings = c("NA", ""), stringsAsFactors = FALSE)
+#Load test set
+test_data <- read.csv("pml-testing.csv",header = TRUE, na.strings = c("NA", ""), stringsAsFactors = FALSE)
+#Check dimensions
+dim(train_data)
+dim(test_data)
+```
+# Data preprocessing
+Our dependant variable is classe: 
+```{r}
+table(train_data$classe)
+```
+Train dataset have a large number of variables, the following function performs some preprocessing to simplify the modeling and reduce the process time: 
+```{r}
+#Cleaning data
+library("caret")
+preProc <- function(rowData, unrev){
+  # Function that performs several preprocessing tasks. Library caret needs to be loaded.
+  # Parameters:
+  #   · rowData: data frame, the dataset to clean 
+  #   · unrev: vector, numcolumns to disregard from the dataset
+  
+  # 1:Irrelevant variables: disregard columns indicated in the parameter Unrev
+  dataset_irrev <- rowData[, -unrev]
+  # 2: Near-zero variance variables: ariables with just one value or very low variance aren´t helpful for prediction, the function remove them:
+  lowVar <- nearZeroVar(dataset_irrev)
+  dataset_nzv <- dataset_irrev[, -lowVar]
+  # 3: NA variables: disregard variables having more than 80% of missing values
+  dataset_nav <- dataset_nzv[ , colSums(is.na(dataset_nzv)) < dim(dataset_nzv)[1]*0.2]
+  
+  invisible(dataset_nav)
+}
+```
+
+This code performs the preprocessing, we don´t need to set aside the column classe before the preprocessing. The first seven variables are irrelevant for our analysis so we can disregard them, namely: number of row, user_name, raw_timestamp_part1, raw_timestamp_part2, cvtd_timestamp, new_window and num_window:  
+```{r}
+train_set <- preProc(train_data, c(1:7))
+dim(train_set)
+```
+We`ve got a train set with 52 predictors and 19622 samples. We will create a dataset for testing our model, leaving 60% of the original samples for training:
+```{r}
+inTrain <- createDataPartition(y=train_set$classe,p=0.6, list=FALSE)
+tr_training <- train_set[inTrain,]
+tr_testing <- train_set[-inTrain,]
+```
+
+# Model building
+The nature of the data suggests considering a no-lineal model. We are not interested in the interpretation of the predictors but in the accuracy of the prediction, so we decided to go with a random forest classifier. The parameters to control the fit.
+```{r}
+library(randomForest)
+set.seed(1970)
+trCtrl <- trainControl(method = "cv", number = 4, allowParallel = TRUE)
+#This can take a while to run
+modFit <- train(classe ~ ., data = tr_training, method = "rf", 
+                prof = TRUE, trControl = trCtrl)
+modFit
+```
+The estimated accuracy is:
+```{r}
+fitResults <- modFit$results
+round(max(fitResults$Accuracy), 4) * 100
+```
+This is a rather good estimate, so we proceed to validate the model.
+
+# Model validation
+We will use the dataset we set aside for testing, to estimate the out of sample error of the model:
+```{r}
+confM <- confusionMatrix(tr_testing$classe, predict(modFit, tr_testing))
+confM
+```
+The estimated out of sample error is 1 minus the accuracy, that is, as a percentage:  
+```{r}
+oosError <- round(1-as.vector(confM$overall[1]), 4) * 100
+oosError
+```
+
+# Testing the model
+Finally, we predict the 20 test cases with the fitted model:
+```{r}
+submit <- predict(modFit, test_data)
+submit
+```
+
+
